@@ -31,6 +31,10 @@
   #endif
 #endif
 
+#ifdef HAVE_WEBP
+#include <webp/decode.h>
+#endif // HAVE_WEBP
+
 using JPEGDecodeL = std::function<uint32_t (uint8_t* const src)>;
 
 class Image : public Napi::ObjectWrap<Image> {
@@ -60,6 +64,7 @@ class Image : public Napi::ObjectWrap<Image> {
     static int isGIF(uint8_t *data);
     static int isSVG(uint8_t *data, unsigned len);
     static int isBMP(uint8_t *data, unsigned len);
+    static int isWEBP(uint8_t *data, unsigned len);
     static cairo_status_t readPNG(void *closure, unsigned char *data, unsigned len);
     inline int isComplete(){ return COMPLETE == state; }
     cairo_surface_t *surface();
@@ -77,6 +82,12 @@ class Image : public Napi::ObjectWrap<Image> {
     cairo_status_t loadGIFFromBuffer(uint8_t *buf, unsigned len);
     cairo_status_t loadGIF(FILE *stream);
 #endif
+#ifdef HAVE_WEBP
+    cairo_status_t loadWEBPFromBuffer(uint8_t *buf, unsigned len);
+    cairo_status_t loadWEBP(FILE *stream);
+    cairo_status_t renderWEBPToSurface();
+#endif
+
 #ifdef HAVE_JPEG
     enum Orientation {
         NORMAL,
@@ -143,4 +154,10 @@ class Image : public Napi::ObjectWrap<Image> {
     int _svg_last_width;
     int _svg_last_height;
 #endif
+#ifdef HAVE_WEBP
+    uint8_t *_webp_data = nullptr;
+    bool _is_webp;
+    int _webp_last_width;
+    int _webp_last_height;
+#endif // HAVE_WEBP
 };

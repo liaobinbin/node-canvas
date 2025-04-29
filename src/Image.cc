@@ -91,6 +91,12 @@ Image::Image(const Napi::CallbackInfo& info) : ObjectWrap<Image>(info), env(info
   _is_svg = false;
   _svg_last_width = _svg_last_height = 0;
 #endif
+#ifdef HAVE_WEBP
+  // _webp_data = nullptr;
+  // webp = NULL:
+  _is_webp = false;
+  _webp_last_width = _webp_last_height = 0;
+#endif // HAVE_WEBP
 }
 
 /*
@@ -325,6 +331,15 @@ Image::loadFromBuffer(uint8_t *buf, unsigned len) {
   if (isBMP(buf, len))
     return loadBMPFromBuffer(buf, len);
 
+  if(isWEBP(buf, len)){
+  #ifdef HAVE_WEBP
+    return loadWEBPFromBuffer(buf, len);
+  #else
+    this->errorInfo.set("node-canvas was built without WEBP support");
+    return CAIRO_STATUS_READ_ERROR;
+  #endif
+  }
+
   this->errorInfo.set("Unsupported image type");
   return CAIRO_STATUS_READ_ERROR;
 }
@@ -413,6 +428,22 @@ cairo_surface_t *Image::surface() {
     }
   }
 #endif
+#ifdef HAVE_WEBP
+  if (_is_webp && (_webp_last_width != width || _webp_last_height != height)) {
+    if (_surface != NULL) {
+      cairo_surface_destroy(_surface);
+      _surface = NULL;
+    }
+
+    cairo_status_t status = renderWEBPToSurface();
+    if (status != CAIRO_STATUS_SUCCESS) {
+      // g_object_unref(_rsvg);
+      Napi::Error::New(env, cairo_status_to_string(status)).ThrowAsJavaScriptException();
+
+      return NULL;
+    }
+  }
+#endif // HAVE_WEBP
   return _surface;
 }
 
@@ -1647,6 +1678,122 @@ cairo_status_t Image::loadBMP(FILE *stream){
   return result;
 }
 
+#ifdef HAVE_WEBP
+ /*
+ * @CAIRO_FORMAT_ARGB32: each pixel is a 32-bit quantity, with
+ *   alpha in the upper 8 bits, then red, then green, then blue.
+ *   The 32-bit quantities are stored native-endian. Pre-multiplied
+ *   alpha is used. (That is, 50% transparent red is 0x80800000,
+ *   not 0x80ff0000.) (Since 1.0)
+ */
+// 预乘透明度
+void premultiply_alpha(unsigned char* data, int width, int height) {
+    for (int i = 0; i < width * height; i++) {
+        unsigned char* pixel = data + i * 4;
+        unsigned char r = pixel[0];
+        unsigned char g = pixel[1];
+        unsigned char b = pixel[2];
+        unsigned char a = pixel[3]; // Alpha
+
+
+        pixel[0] = (a * b) / 255; // Blue
+        pixel[1] = (a * g) / 255; // Green
+        pixel[2] = (a * r) / 255; // Red
+        pixel[3] = a;             // Alpha
+    }
+}
+
+/*
+ * Load WEBP from buffer
+ */
+cairo_status_t Image::loadWEBPFromBuffer(uint8_t *buf, unsigned len){
+  _is_webp = true;
+
+  cairo_status_t status;
+  // GError *gerr = NULL;
+
+  int i_width;
+  int i_height;
+
+  if(!WebPGetInfo(buf, len, &i_width, &i_height)) {
+    return CAIRO_STATUS_READ_ERROR;
+  }
+
+  // uint8_t* imageData = nullptr;
+
+  _data = WebPDecodeRGBA(buf, len, &i_width, &i_height);
+
+  premultiply_alpha(_data, i_width, i_height);
+
+  width = naturalWidth = i_width;
+  height = naturalHeight = i_height;
+
+  status = renderWEBPToSurface();
+  if (status != CAIRO_STATUS_SUCCESS) {
+    // g_object_unref(_rsvg);
+    return status;
+  }
+
+  return CAIRO_STATUS_SUCCESS;
+}
+
+
+/*
+ * Renders the Rsvg handle to this image's surface
+ */
+cairo_status_t
+Image::renderWEBPToSurface() {
+  cairo_status_t status;
+
+  _surface = cairo_image_surface_create_for_data(_data, CAIRO_FORMAT_ARGB32, width, height, width * 4);
+
+  status = cairo_surface_status(_surface);
+  if (status != CAIRO_STATUS_SUCCESS) {
+    // g_object_unref(_rsvg);
+    return status;
+  }
+
+  cairo_t *cr = cairo_create(_surface);
+  // cairo_scale(cr,
+  //   (double)width / (double)naturalWidth,
+  //   (double)height / (double)naturalHeight);
+
+  status = cairo_status(cr);
+  if (status != CAIRO_STATUS_SUCCESS) {
+    // g_object_unref(_rsvg);
+    return status;
+  }
+
+  cairo_set_source_surface(cr, _surface, 0, 0);
+  cairo_paint(cr);
+
+  // RsvgRectangle viewport = {
+  //   0, // x
+  //   0, // y
+  //   static_cast<double>(width),
+  //   static_cast<double>(height)
+  // };
+
+  // gboolean render_ok = rsvg_handle_render_document(_rsvg, cr, &viewport, nullptr);
+  // if (!render_ok) {
+  //   // g_object_unref(_rsvg);
+  //   cairo_destroy(cr);
+  //   return CAIRO_STATUS_READ_ERROR; // or WRITE?
+  // }
+
+  cairo_surface_destroy(_surface);
+  // cairo_destroy(cr);
+  // free(_webp_data);
+
+  _webp_last_width = width;
+  _webp_last_height = height;
+
+  return status;
+}
+
+#endif // HAVE_WEBP
+
+
 /*
  * Return UNKNOWN, SVG, GIF, JPEG, or PNG based on the filename.
  */
@@ -1724,4 +1871,16 @@ int Image::isBMP(uint8_t *data, unsigned len) {
          sig == "CP" ||
          sig == "IC" ||
          sig == "PT";
+}
+
+
+/*
+ * Sniff bytes 0..3 for "RIFF" & 0..11 for "WEBP"
+ */
+int
+Image::isWEBP(uint8_t *data, unsigned len){
+  if(len < 12) return false;
+  std::string riff = std::string(1, (char)data[0]) + (char)data[1] + (char)data[2] + (char)data[3];
+  std::string webp = std::string(1, (char)data[8]) + (char)data[9] + (char)data[10] + (char)data[11];
+  return riff == "RIFF" && webp == "WEBP";
 }

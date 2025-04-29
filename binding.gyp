@@ -22,7 +22,8 @@
       'variables': {
         'with_jpeg%': '<!(node ./util/has_lib.js jpeg)',
         'with_gif%': '<!(node ./util/has_lib.js gif)',
-        'with_rsvg%': '<!(node ./util/has_lib.js rsvg)'
+        'with_rsvg%': '<!(node ./util/has_lib.js rsvg)',
+        'with_webp%': '<!(node ./util/has_lib.js webp)'
       }
     }]
   ],
@@ -224,6 +225,36 @@
               ],
               'libraries': [
                 '<!@(pkg-config librsvg-2.0 --libs)'
+              ]
+            }]
+          ]
+        }],
+        ['with_webp=="true"', {
+          'defines': [
+            'HAVE_WEBP'
+          ],
+          'conditions': [
+            ['OS=="win"', {
+              'copies': [{
+                'destination': '<(PRODUCT_DIR)',
+                'files': [
+                  '<(GTK_Root)/bin/librsvg-2-2.dll',
+                  '<(GTK_Root)/bin/libgdk_pixbuf-2.0-0.dll',
+                  '<(GTK_Root)/bin/libgio-2.0-0.dll',
+                  '<(GTK_Root)/bin/libcroco-0.6-3.dll',
+                  '<(GTK_Root)/bin/libgsf-1-114.dll',
+                  '<(GTK_Root)/bin/libxml2-2.dll'
+                ]
+              }],
+              'libraries': [
+                '-l<(GTK_Root)/lib/librsvg-2-2.lib'
+              ]
+            }, {
+              'include_dirs': [
+                '<!@(pkg-config libwebp --cflags-only-I | sed s/-I//g)'
+              ],
+              'libraries': [
+                '<!@(pkg-config libwebp --libs)'
               ]
             }]
           ]
